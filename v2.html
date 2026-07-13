@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="FosterCars">
 <title>FosterCars</title>
-<!-- v3: shared leaderboard via Firebase RTDB (REST). v2 backup at /v2.html -->
+<!-- v2: trip log + specs -->
 <style>
   :root { --bg:#0d1117; --panel:#161c26; --accent:#ff4d4d; --green:#3fb950;
     --text:#e6edf3; --dim:#8b949e; }
@@ -46,11 +46,8 @@
   #logView .btnrow button { flex:1; font-size:4.2vmin; padding:2.6vmin; border-radius:12px;
     border:none; font-weight:700; color:#fff; }
   #exportLog { background:var(--green); }
-  #inviteBtn { background:#1f6feb; }
   #clearLog { background:#5a2430; }
   #closeLog { background:#232b3a; }
-  .secHead { margin:3vmin 0 .5vmin; font-size:4.6vmin; color:var(--accent); font-weight:700; }
-  .lbMe { color:var(--green); }
 
   #viewwrap { position:relative; flex:1 1 auto; background:#000; overflow:hidden; }
   #video,#frozen { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
@@ -150,7 +147,6 @@
     <div id="logRows"></div>
     <div class="btnrow">
       <button id="exportLog">Export</button>
-      <button id="inviteBtn">Invite</button>
       <button id="clearLog">Clear</button>
       <button id="closeLog">Close</button>
     </div>
@@ -167,10 +163,6 @@
     </select>
     <p>Countdown seconds:</p>
     <input id="cdInput" type="number" value="7" min="3" max="20">
-    <p><b>Family sync</b> (optional — for a joint leaderboard across phones). Paste your Firebase database URL, pick a shared game code, and name your car's team:</p>
-    <input id="dbInput" placeholder="https://xxxx-default-rtdb.firebaseio.com" autocomplete="off">
-    <input id="gameInput" placeholder="game code, e.g. foster-summer-26" autocomplete="off">
-    <input id="famInput" placeholder="team name, e.g. Team Robert" autocomplete="off">
     <button id="saveSetup">START SPOTTING</button>
   </div>
 </div>
@@ -189,14 +181,6 @@ const LS = {
   set players(v) { localStorage.setItem("carid_players", JSON.stringify(v)); },
   get log() { try { return JSON.parse(localStorage.getItem("carid_log")) || []; } catch(e){ return []; } },
   set log(v) { localStorage.setItem("carid_log", JSON.stringify(v)); },
-  get db() { return localStorage.getItem("carid_db") || ""; },
-  set db(v) { localStorage.setItem("carid_db", v); },
-  get game() { return localStorage.getItem("carid_game") || ""; },
-  set game(v) { localStorage.setItem("carid_game", v); },
-  get fam() { return localStorage.getItem("carid_fam") || ""; },
-  set fam(v) { localStorage.setItem("carid_fam", v); },
-  get queue() { try { return JSON.parse(localStorage.getItem("carid_queue")) || []; } catch(e){ return []; } },
-  set queue(v) { localStorage.setItem("carid_queue", JSON.stringify(v)); },
 };
 let players = LS.players;
 let busy = false, stream = null, usingFallback = false;
@@ -209,31 +193,6 @@ Respond with ONLY a JSON object, no other text:
 {"make":"e.g. Toyota","model":"e.g. Corolla","years":"generation year range, e.g. 2020-2024","trim_or_notes":"trim or distinguishing detail if visible, else empty","confidence":"high|medium|low","zero_to_sixty":"typical 0-60 mph time for this model, e.g. 7.1s","horsepower":"typical output, e.g. 169 hp","top_speed":"typical top speed, e.g. 118 mph","fun_fact":"one short punchy fact a car-enthusiast kid would love","no_car":false}
 Use typical figures for the most common variant of the identified generation.
 If there is genuinely no identifiable vehicle, set "no_car": true.`;
-
-// ---------- family sync (Firebase RTDB over REST) ----------
-const syncOn = () => !!(LS.db && LS.game);
-const scoreKey = name => LS.fam ? `${name} (${LS.fam})` : name;
-function dbPath(p) {
-  return LS.db.replace(/\/+$/, "") + "/games/" + encodeURIComponent(LS.game) + "/" + p + ".json";
-}
-async function dbSend(job) {
-  const r = await fetch(dbPath(job.p), { method: job.m, body: JSON.stringify(job.body) });
-  if (!r.ok) throw new Error("sync " + r.status);
-}
-let flushing = false;
-async function flushQueue() {
-  if (flushing || !syncOn()) return;
-  flushing = true;
-  try {
-    let q = LS.queue;
-    while (q.length) { await dbSend(q[0]); q = q.slice(1); LS.queue = q; }
-  } catch (e) {} finally { flushing = false; }
-}
-async function trySync(job) {
-  if (!syncOn()) return;
-  try { await dbSend(job); flushQueue(); }
-  catch (e) { const q = LS.queue; q.push(job); LS.queue = q.slice(-300); }
-}
 
 // ---------- audio ----------
 let actx;
@@ -386,13 +345,10 @@ function showReveal(out) {
     $("sHp").textContent = r.horsepower || "—";
     $("sTop").textContent = r.top_speed || "—";
     $("rFact").textContent = r.fun_fact || "";
-    // trip log (local + shared)
+    // trip log
     const log = LS.log;
     log.push({ make: r.make || "?", model: r.model || "", years: r.years || "", t: Date.now() });
     LS.log = log;
-    trySync({ p: "spots", m: "POST",
-      body: { make: r.make || "?", model: r.model || "", years: r.years || "",
-              fam: LS.fam || "", t: Date.now() } });
     players.forEach((p, pi) => {
       [["Make +1",1],["Model +2",2],["Year +2",2]].forEach(([label, pts]) => {
         const b = document.createElement("button");
@@ -402,8 +358,6 @@ function showReveal(out) {
           b.disabled = true; b.style.opacity = .4;
           players[pi].score += pts;
           LS.players = players; renderScorebar();
-          trySync({ p: "scores", m: "PATCH",
-            body: { [scoreKey(p.name)]: { ".sv": { "increment": pts } } } });
         };
         $("awardRow").appendChild(b);
       });
@@ -458,110 +412,29 @@ function logTally() {
   });
   return Object.entries(tally).sort((a, b) => b[1].count - a[1].count);
 }
-function rowEl(left, right, cnt) {
-  const d = document.createElement("div");
-  d.className = "logRow";
-  d.innerHTML = `<span>${cnt !== undefined ? `<span class="cnt">${cnt}×</span>` : ""}${left}</span><span class="yrs">${right || ""}</span>`;
-  return d;
-}
-function renderLocalLog() {
+function openLog() {
   const log = LS.log, rows = logTally();
   $("logSummary").textContent =
-    `This phone: ${log.length} car${log.length === 1 ? "" : "s"} · ${rows.length} model${rows.length === 1 ? "" : "s"}`;
+    `${log.length} car${log.length === 1 ? "" : "s"} spotted · ${rows.length} unique model${rows.length === 1 ? "" : "s"}`;
   $("logRows").innerHTML = "";
-  rows.forEach(([name, info]) => $("logRows").appendChild(rowEl(name, info.years, info.count)));
-}
-let lastShared = null;
-function renderShared(scores, spots) {
-  lastShared = { scores, spots };
-  const spotList = Object.values(spots || {});
-  const box = $("logRows");
-  box.innerHTML = "";
-
-  const h1 = document.createElement("div");
-  h1.className = "secHead"; h1.textContent = `Leaderboard — ${LS.game}`;
-  box.appendChild(h1);
-  const myNames = new Set(players.map(p => scoreKey(p.name)));
-  Object.entries(scores || {}).sort((a, b) => b[1] - a[1]).forEach(([name, pts]) => {
-    const d = rowEl(myNames.has(name) ? `<span class="lbMe">${name}</span>` : name, `${pts} pts`);
-    box.appendChild(d);
+  rows.forEach(([name, info]) => {
+    const d = document.createElement("div");
+    d.className = "logRow";
+    d.innerHTML = `<span><span class="cnt">${info.count}×</span>${name}</span><span class="yrs">${info.years}</span>`;
+    $("logRows").appendChild(d);
   });
-
-  const h2 = document.createElement("div");
-  h2.className = "secHead"; h2.textContent = "All cars found";
-  box.appendChild(h2);
-  const tally = {};
-  spotList.forEach(s => {
-    const key = `${s.make} ${s.model}`.trim();
-    if (!tally[key]) tally[key] = { count: 0, years: s.years, fams: new Set() };
-    tally[key].count++;
-    if (s.fam) tally[key].fams.add(s.fam);
-  });
-  Object.entries(tally).sort((a, b) => b[1].count - a[1].count).forEach(([name, info]) => {
-    box.appendChild(rowEl(name, [...info.fams].join(", ") || info.years, info.count));
-  });
-
-  const fams = new Set(spotList.map(s => s.fam).filter(Boolean));
-  $("logSummary").textContent =
-    `Everyone: ${spotList.length} cars · ${Object.keys(tally).length} models` +
-    (fams.size ? ` · ${[...fams].join(" vs ")}` : "");
-}
-async function openLog() {
   $("logView").style.display = "flex";
-  renderLocalLog();
-  if (!syncOn()) return;
-  $("logSummary").textContent += " · syncing…";
-  try {
-    flushQueue();
-    const [sc, sp] = await Promise.all([
-      fetch(dbPath("scores")).then(r => r.json()),
-      fetch(dbPath("spots")).then(r => r.json()),
-    ]);
-    renderShared(sc || {}, sp || {});
-  } catch (e) {
-    $("logSummary").textContent = $("logSummary").textContent.replace("syncing…", "offline — showing this phone only");
-  }
 }
 $("logBtn").onclick = openLog;
-$("inviteBtn").onclick = async () => {
-  if (!syncOn()) { alert("Set up Family sync in ⚙︎ settings first."); return; }
-  const url = location.origin + location.pathname +
-    `?db=${encodeURIComponent(LS.db)}&game=${encodeURIComponent(LS.game)}`;
-  const msg = `Join our FosterCars game "${LS.game}"! Open this link, add your API key in setup, pick a team name, and start spotting: ${url}`;
-  try { await navigator.share({ title: "FosterCars", text: msg }); }
-  catch (e) {
-    try { await navigator.clipboard.writeText(msg); alert("Invite copied — paste it in a text!"); }
-    catch (e2) { prompt("Copy this invite:", msg); }
-  }
-};
 $("closeLog").onclick = () => { $("logView").style.display = "none"; };
 $("clearLog").onclick = () => {
-  if (!confirm("Clear this phone's local log? (The shared game is not affected.)")) return;
-  LS.log = []; renderLocalLog();
+  if (!confirm("Clear the whole trip log?")) return;
+  LS.log = []; openLog();
 };
 $("exportLog").onclick = () => {
-  let rows, total, header;
-  if (lastShared) {
-    const tally = {};
-    Object.values(lastShared.spots || {}).forEach(s => {
-      const key = `${s.make} ${s.model}`.trim();
-      if (!tally[key]) tally[key] = { count: 0, years: s.years };
-      tally[key].count++;
-    });
-    rows = Object.entries(tally).sort((a, b) => b[1].count - a[1].count);
-    total = Object.values(lastShared.spots || {}).length;
-    header = `game "${LS.game}" (all phones)`;
-  } else {
-    rows = logTally(); total = LS.log.length; header = "this phone";
-  }
-  let txt = `FosterCars trip log — ${new Date().toLocaleDateString()} — ${header}\n`;
-  txt += `${total} cars spotted, ${rows.length} unique models\n\n`;
-  if (lastShared) {
-    txt += `Scores:\n`;
-    Object.entries(lastShared.scores || {}).sort((a, b) => b[1] - a[1])
-      .forEach(([n, p]) => { txt += `  ${n}: ${p} pts\n`; });
-    txt += `\n`;
-  }
+  const rows = logTally(), log = LS.log;
+  let txt = `FosterCars trip log — ${new Date().toLocaleDateString()}\n`;
+  txt += `${log.length} cars spotted, ${rows.length} unique models\n\n`;
   rows.forEach(([name, info]) => {
     txt += `${String(info.count).padStart(3)}x  ${name}${info.years ? "  (" + info.years + ")" : ""}\n`;
   });
@@ -577,38 +450,23 @@ function openSetup() {
   $("keyInput").value = LS.k;
   $("modelSel").value = LS.model;
   $("cdInput").value = LS.cd;
-  $("dbInput").value = LS.db;
-  $("gameInput").value = LS.game;
-  $("famInput").value = LS.fam;
   $("setup").style.display = "flex";
 }
 $("gearBtn").onclick = openSetup;
 $("saveSetup").onclick = () => {
   const k = $("keyInput").value.trim();
   if (!k.startsWith("sk-")) { alert("That doesn't look like an API key."); return; }
-  const db = $("dbInput").value.trim();
-  if (db && !/^https:\/\/[\w.-]+\.(firebaseio\.com|firebasedatabase\.app)\/?$/.test(db)) {
-    alert("The database URL should look like https://xxxx-default-rtdb.firebaseio.com"); return;
-  }
   LS.k = k;
   LS.model = $("modelSel").value;
   LS.cd = Math.max(3, Math.min(20, +$("cdInput").value || 7));
-  LS.db = db;
-  LS.game = $("gameInput").value.trim().toLowerCase().replace(/[^a-z0-9-]/g, "-").slice(0, 40);
-  LS.fam = $("famInput").value.trim().slice(0, 20);
   $("setup").style.display = "none";
   keepAwake();
-  flushQueue();
   if (!stream && !usingFallback) startCamera();
 };
 
 // ---------- boot ----------
-const qp = new URLSearchParams(location.search);
-if (qp.get("db")) LS.db = qp.get("db");
-if (qp.get("game")) LS.game = qp.get("game");
-if (qp.get("fam")) LS.fam = qp.get("fam");
 renderScorebar();
-if (!LS.k) openSetup(); else { startCamera(); keepAwake(); flushQueue(); }
+if (!LS.k) openSetup(); else { startCamera(); keepAwake(); }
 </script>
 </body>
 </html>
