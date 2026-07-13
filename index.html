@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Car ID Game</title>
+<meta name="apple-mobile-web-app-title" content="FosterCars">
+<title>FosterCars</title>
+<!-- v2: trip log + specs -->
 <style>
   :root { --bg:#0d1117; --panel:#161c26; --accent:#ff4d4d; --green:#3fb950;
     --text:#e6edf3; --dim:#8b949e; }
@@ -22,8 +24,30 @@
   .chip small { color:var(--dim); font-weight:400; margin-left:6px; }
   #addPlayer,#gearBtn,#resetBtn { background:none; border:2px dashed var(--dim); color:var(--dim);
     border-radius:999px; padding:6px 13px; font-size:17px; flex:0 0 auto; }
-  #gearBtn,#resetBtn { border-style:solid; border-color:transparent; font-size:20px; }
-  #gearBtn { margin-left:auto; }
+  #gearBtn,#resetBtn,#logBtn { border-style:solid; border-color:transparent; font-size:20px; }
+  #logBtn { margin-left:auto; }
+
+  /* specs row */
+  #specRow { display:flex; gap:10px; margin-top:2.5vmin; }
+  .spec { flex:1; background:var(--panel); border-radius:10px; padding:2vmin; text-align:center; }
+  .spec b { display:block; font-size:4.5vmin; color:var(--text); }
+  .spec span { font-size:2.8vmin; color:var(--dim); text-transform:uppercase; letter-spacing:.1em; }
+
+  /* trip log */
+  #logView { position:absolute; inset:0; z-index:15; display:none; flex-direction:column;
+    background:var(--bg); padding:4vmin; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+  #logView h1 { font-size:6.5vmin; margin-bottom:1vmin; }
+  #logSummary { color:var(--dim); font-size:3.8vmin; margin-bottom:2.5vmin; }
+  .logRow { display:flex; justify-content:space-between; align-items:baseline; padding:2vmin 0;
+    border-bottom:1px solid #232b3a; font-size:4.2vmin; }
+  .logRow .cnt { color:var(--green); font-weight:800; margin-right:2vmin; }
+  .logRow .yrs { color:var(--dim); font-size:3.2vmin; }
+  #logView .btnrow { display:flex; gap:10px; margin-top:3vmin; }
+  #logView .btnrow button { flex:1; font-size:4.2vmin; padding:2.6vmin; border-radius:12px;
+    border:none; font-weight:700; color:#fff; }
+  #exportLog { background:var(--green); }
+  #clearLog { background:#5a2430; }
+  #closeLog { background:#232b3a; }
 
   #viewwrap { position:relative; flex:1 1 auto; background:#000; overflow:hidden; }
   #video,#frozen { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
@@ -78,6 +102,7 @@
   <div id="scorebar">
     <button id="addPlayer">+ player</button>
     <button id="resetBtn">↺</button>
+    <button id="logBtn">📋</button>
     <button id="gearBtn">⚙︎</button>
   </div>
 
@@ -100,6 +125,11 @@
       <h1 id="rTitle"></h1>
       <h2 id="rYears"></h2>
       <div class="notes" id="rNotes"></div>
+      <div id="specRow">
+        <div class="spec"><b id="sZero">—</b><span>0–60</span></div>
+        <div class="spec"><b id="sHp">—</b><span>Power</span></div>
+        <div class="spec"><b id="sTop">—</b><span>Top speed</span></div>
+      </div>
       <div class="fact" id="rFact"></div>
       <div id="rErr" class="err"></div>
       <div id="awardRow"></div>
@@ -111,8 +141,19 @@
     <button id="snapBtn">📸 SNAP!</button>
   </div>
 
+  <div id="logView">
+    <h1>Trip log 🛣️</h1>
+    <div id="logSummary"></div>
+    <div id="logRows"></div>
+    <div class="btnrow">
+      <button id="exportLog">Export</button>
+      <button id="clearLog">Clear</button>
+      <button id="closeLog">Close</button>
+    </div>
+  </div>
+
   <div id="setup">
-    <h1>Car ID Game 🚗</h1>
+    <h1>FosterCars 🚗</h1>
     <p>Paste your Anthropic API key (from <b>console.anthropic.com</b>). It's stored only on this phone.</p>
     <input id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off">
     <p>Model:</p>
@@ -138,6 +179,8 @@ const LS = {
   set cd(v) { localStorage.setItem("carid_cd", v); },
   get players() { try { return JSON.parse(localStorage.getItem("carid_players")) || []; } catch(e){ return []; } },
   set players(v) { localStorage.setItem("carid_players", JSON.stringify(v)); },
+  get log() { try { return JSON.parse(localStorage.getItem("carid_log")) || []; } catch(e){ return []; } },
+  set log(v) { localStorage.setItem("carid_log", JSON.stringify(v)); },
 };
 let players = LS.players;
 let busy = false, stream = null, usingFallback = false;
@@ -147,7 +190,8 @@ You will see a photo taken from a moving car of another vehicle on the road.
 Identify the most prominent/central vehicle. The photo may be blurry or partial — make your best expert guess anyway.
 
 Respond with ONLY a JSON object, no other text:
-{"make":"e.g. Toyota","model":"e.g. Corolla","years":"generation year range, e.g. 2020-2024","trim_or_notes":"trim or distinguishing detail if visible, else empty","confidence":"high|medium|low","fun_fact":"one short punchy fact a car-enthusiast kid would love","no_car":false}
+{"make":"e.g. Toyota","model":"e.g. Corolla","years":"generation year range, e.g. 2020-2024","trim_or_notes":"trim or distinguishing detail if visible, else empty","confidence":"high|medium|low","zero_to_sixty":"typical 0-60 mph time for this model, e.g. 7.1s","horsepower":"typical output, e.g. 169 hp","top_speed":"typical top speed, e.g. 118 mph","fun_fact":"one short punchy fact a car-enthusiast kid would love","no_car":false}
+Use typical figures for the most common variant of the identified generation.
 If there is genuinely no identifiable vehicle, set "no_car": true.`;
 
 // ---------- audio ----------
@@ -278,6 +322,8 @@ async function playRound(dataUrl) {
 function showReveal(out) {
   ["rConf","rTitle","rYears","rNotes","rFact","rErr"].forEach(i => $(i).textContent = "");
   $("awardRow").innerHTML = "";
+  $("specRow").style.display = "none";
+  ["sZero","sHp","sTop"].forEach(i => $(i).textContent = "—");
 
   if (!out.ok) {
     $("rTitle").textContent = "Hmm, no answer";
@@ -294,7 +340,15 @@ function showReveal(out) {
     $("rTitle").textContent = `${r.make || "?"} ${r.model || ""}`;
     $("rYears").textContent = r.years || "";
     $("rNotes").textContent = r.trim_or_notes || "";
+    $("specRow").style.display = "flex";
+    $("sZero").textContent = r.zero_to_sixty || "—";
+    $("sHp").textContent = r.horsepower || "—";
+    $("sTop").textContent = r.top_speed || "—";
     $("rFact").textContent = r.fun_fact || "";
+    // trip log
+    const log = LS.log;
+    log.push({ make: r.make || "?", model: r.model || "", years: r.years || "", t: Date.now() });
+    LS.log = log;
     players.forEach((p, pi) => {
       [["Make +1",1],["Model +2",2],["Year +2",2]].forEach(([label, pts]) => {
         const b = document.createElement("button");
@@ -346,6 +400,49 @@ $("resetBtn").onclick = () => {
   if (!confirm("Reset all scores?")) return;
   players.forEach(p => p.score = 0);
   LS.players = players; renderScorebar();
+};
+
+// ---------- trip log ----------
+function logTally() {
+  const log = LS.log, tally = {};
+  log.forEach(e => {
+    const key = `${e.make} ${e.model}`.trim();
+    if (!tally[key]) tally[key] = { count: 0, years: e.years };
+    tally[key].count++;
+  });
+  return Object.entries(tally).sort((a, b) => b[1].count - a[1].count);
+}
+function openLog() {
+  const log = LS.log, rows = logTally();
+  $("logSummary").textContent =
+    `${log.length} car${log.length === 1 ? "" : "s"} spotted · ${rows.length} unique model${rows.length === 1 ? "" : "s"}`;
+  $("logRows").innerHTML = "";
+  rows.forEach(([name, info]) => {
+    const d = document.createElement("div");
+    d.className = "logRow";
+    d.innerHTML = `<span><span class="cnt">${info.count}×</span>${name}</span><span class="yrs">${info.years}</span>`;
+    $("logRows").appendChild(d);
+  });
+  $("logView").style.display = "flex";
+}
+$("logBtn").onclick = openLog;
+$("closeLog").onclick = () => { $("logView").style.display = "none"; };
+$("clearLog").onclick = () => {
+  if (!confirm("Clear the whole trip log?")) return;
+  LS.log = []; openLog();
+};
+$("exportLog").onclick = () => {
+  const rows = logTally(), log = LS.log;
+  let txt = `FosterCars trip log — ${new Date().toLocaleDateString()}\n`;
+  txt += `${log.length} cars spotted, ${rows.length} unique models\n\n`;
+  rows.forEach(([name, info]) => {
+    txt += `${String(info.count).padStart(3)}x  ${name}${info.years ? "  (" + info.years + ")" : ""}\n`;
+  });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([txt], { type: "text/plain" }));
+  a.download = "fostercars-trip-log.txt";
+  a.click();
+  URL.revokeObjectURL(a.href);
 };
 
 // ---------- setup ----------
