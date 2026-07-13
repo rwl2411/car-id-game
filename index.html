@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Car ID Game</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161c26; --accent:#ff4d4d; --green:#3fb950;
+    --text:#e6edf3; --dim:#8b949e; }
+  * { box-sizing:border-box; margin:0; -webkit-tap-highlight-color:transparent; user-select:none; }
+  html,body { height:100%; overflow:hidden; background:var(--bg); color:var(--text);
+    font-family:system-ui,-apple-system,sans-serif; }
+  #stage { position:relative; height:100%; display:flex; flex-direction:column;
+    padding-top:env(safe-area-inset-top); padding-bottom:env(safe-area-inset-bottom); }
+
+  #scorebar { display:flex; gap:8px; padding:8px 10px; align-items:center;
+    background:var(--panel); overflow-x:auto; flex:0 0 auto; }
+  .chip { padding:8px 14px; border-radius:999px; background:#232b3a; font-size:17px;
+    font-weight:600; white-space:nowrap; }
+  .chip small { color:var(--dim); font-weight:400; margin-left:6px; }
+  #addPlayer,#gearBtn,#resetBtn { background:none; border:2px dashed var(--dim); color:var(--dim);
+    border-radius:999px; padding:6px 13px; font-size:17px; flex:0 0 auto; }
+  #gearBtn,#resetBtn { border-style:solid; border-color:transparent; font-size:20px; }
+  #gearBtn { margin-left:auto; }
+
+  #viewwrap { position:relative; flex:1 1 auto; background:#000; overflow:hidden; }
+  #video,#frozen { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  #frozen { display:none; }
+
+  #countdown { position:absolute; inset:0; display:none; align-items:center;
+    justify-content:center; flex-direction:column; background:rgba(0,0,0,.35); }
+  #countNum { font-size:36vmin; font-weight:800; color:#fff;
+    text-shadow:0 0 40px rgba(255,77,77,.9); line-height:1; }
+  #countHint { font-size:4.5vmin; color:#fff; opacity:.85; margin-top:1vmin; }
+
+  #reveal { position:absolute; inset:0; display:none; flex-direction:column;
+    background:rgba(13,17,23,.95); padding:4vmin; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+  #reveal .conf { color:var(--dim); font-size:3vmin; text-transform:uppercase; letter-spacing:.15em; }
+  #reveal h1 { font-size:8.5vmin; line-height:1.1; margin:1vmin 0; }
+  #reveal h2 { font-size:5vmin; color:var(--accent); font-weight:600; }
+  #reveal .notes { font-size:3.8vmin; color:var(--dim); margin-top:1vmin; }
+  #reveal .fact { margin-top:2.5vmin; padding:2.5vmin; background:var(--panel);
+    border-left:5px solid var(--green); border-radius:8px; font-size:4vmin; }
+  .err { color:#ff8080; font-size:4vmin; margin-top:2vmin; word-break:break-word; }
+  #awardRow { display:flex; flex-wrap:wrap; gap:9px; margin-top:3vmin; }
+  .awardBtn { font-size:4vmin; padding:2.4vmin 3vmin; border-radius:12px; border:none;
+    background:#232b3a; color:var(--text); font-weight:700; }
+  .awardBtn:active { background:var(--green); }
+  #nextBtn { margin-top:auto; font-size:5.5vmin; padding:3vmin; border-radius:14px;
+    border:none; background:var(--accent); color:#fff; font-weight:800; width:100%; }
+
+  #snapBar { flex:0 0 auto; padding:10px; background:var(--panel); }
+  #snapBtn { width:100%; font-size:7.5vmin; padding:3vmin; border-radius:16px; border:none;
+    background:var(--accent); color:#fff; font-weight:800; letter-spacing:.05em; }
+  #snapBtn:active { transform:scale(.98); }
+  #snapBtn:disabled { background:#3a2020; color:#a55; }
+
+  /* settings / setup */
+  #setup { position:absolute; inset:0; z-index:20; display:none; flex-direction:column;
+    gap:3vmin; background:var(--bg); padding:6vmin; overflow-y:auto; }
+  #setup h1 { font-size:7vmin; }
+  #setup p { color:var(--dim); font-size:3.8vmin; line-height:1.45; }
+  #setup input,#setup select { width:100%; font-size:4.2vmin; padding:3vmin; border-radius:10px;
+    border:1px solid #333c4d; background:var(--panel); color:var(--text); }
+  #setup button { font-size:4.5vmin; padding:3vmin; border-radius:12px; border:none;
+    background:var(--accent); color:#fff; font-weight:800; }
+
+  #fallbackCap { display:none; position:absolute; inset:0; z-index:5;
+    align-items:center; justify-content:center; flex-direction:column; gap:3vmin;
+    background:var(--bg); padding:6vmin; text-align:center; }
+  #fallbackCap p { color:var(--dim); font-size:4vmin; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="scorebar">
+    <button id="addPlayer">+ player</button>
+    <button id="resetBtn">↺</button>
+    <button id="gearBtn">⚙︎</button>
+  </div>
+
+  <div id="viewwrap">
+    <video id="video" autoplay playsinline muted></video>
+    <img id="frozen" alt="">
+    <div id="fallbackCap">
+      <p>Live preview isn't available, but the camera still works:</p>
+      <label class="awardBtn" style="font-size:5vmin;padding:3vmin 5vmin;">
+        📸 Open Camera
+        <input id="fileCap" type="file" accept="image/*" capture="environment" hidden>
+      </label>
+    </div>
+    <div id="countdown">
+      <div id="countNum">7</div>
+      <div id="countHint">Make · Model · Year — GO!</div>
+    </div>
+    <div id="reveal">
+      <div class="conf" id="rConf"></div>
+      <h1 id="rTitle"></h1>
+      <h2 id="rYears"></h2>
+      <div class="notes" id="rNotes"></div>
+      <div class="fact" id="rFact"></div>
+      <div id="rErr" class="err"></div>
+      <div id="awardRow"></div>
+      <button id="nextBtn">NEXT CAR ▶</button>
+    </div>
+  </div>
+
+  <div id="snapBar">
+    <button id="snapBtn">📸 SNAP!</button>
+  </div>
+
+  <div id="setup">
+    <h1>Car ID Game 🚗</h1>
+    <p>Paste your Anthropic API key (from <b>console.anthropic.com</b>). It's stored only on this phone.</p>
+    <input id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off">
+    <p>Model:</p>
+    <select id="modelSel">
+      <option value="claude-sonnet-5">Sonnet — best accuracy</option>
+      <option value="claude-haiku-4-5">Haiku — faster & cheaper</option>
+    </select>
+    <p>Countdown seconds:</p>
+    <input id="cdInput" type="number" value="7" min="3" max="20">
+    <button id="saveSetup">START SPOTTING</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const LS = {
+  get k() { return localStorage.getItem("carid_key") || ""; },
+  set k(v) { localStorage.setItem("carid_key", v); },
+  get model() { return localStorage.getItem("carid_model") || "claude-sonnet-5"; },
+  set model(v) { localStorage.setItem("carid_model", v); },
+  get cd() { return +(localStorage.getItem("carid_cd") || 7); },
+  set cd(v) { localStorage.setItem("carid_cd", v); },
+  get players() { try { return JSON.parse(localStorage.getItem("carid_players")) || []; } catch(e){ return []; } },
+  set players(v) { localStorage.setItem("carid_players", JSON.stringify(v)); },
+};
+let players = LS.players;
+let busy = false, stream = null, usingFallback = false;
+
+const SYSTEM_PROMPT = `You are a world-class car spotter judging a family car-identification game.
+You will see a photo taken from a moving car of another vehicle on the road.
+Identify the most prominent/central vehicle. The photo may be blurry or partial — make your best expert guess anyway.
+
+Respond with ONLY a JSON object, no other text:
+{"make":"e.g. Toyota","model":"e.g. Corolla","years":"generation year range, e.g. 2020-2024","trim_or_notes":"trim or distinguishing detail if visible, else empty","confidence":"high|medium|low","fun_fact":"one short punchy fact a car-enthusiast kid would love","no_car":false}
+If there is genuinely no identifiable vehicle, set "no_car": true.`;
+
+// ---------- audio ----------
+let actx;
+function beep(freq, dur=0.08, gain=0.15) {
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === "suspended") actx.resume();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.value = freq; g.gain.value = gain;
+    o.connect(g); g.connect(actx.destination);
+    o.start(); o.stop(actx.currentTime + dur);
+  } catch(e) {}
+}
+
+// ---------- wake lock ----------
+async function keepAwake() {
+  try { if (navigator.wakeLock) await navigator.wakeLock.request("screen"); } catch(e) {}
+}
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) keepAwake();
+});
+
+// ---------- camera ----------
+async function startCamera() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } },
+      audio: false,
+    });
+    $("video").srcObject = stream;
+    usingFallback = false;
+  } catch (e) {
+    usingFallback = true;
+    $("video").style.display = "none";
+    $("fallbackCap").style.display = "flex";
+    $("snapBtn").style.display = "none";
+  }
+}
+
+function grabFrame() {
+  const v = $("video");
+  const c = document.createElement("canvas");
+  const scale = Math.min(1, 1568 / Math.max(v.videoWidth, v.videoHeight));
+  c.width = Math.round(v.videoWidth * scale);
+  c.height = Math.round(v.videoHeight * scale);
+  c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+  return c.toDataURL("image/jpeg", 0.85);
+}
+
+function fileToDataURL(file) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 1568 / Math.max(img.width, img.height));
+      const c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale);
+      c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      res(c.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = rej;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+// ---------- API ----------
+async function identify(dataUrl) {
+  const b64 = dataUrl.split(",")[1];
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": LS.k,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: LS.model,
+      max_tokens: 400,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: [
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } },
+        { type: "text", text: "Identify this vehicle." },
+      ]}],
+    }),
+  });
+  if (!resp.ok) {
+    const t = await resp.text();
+    throw new Error(`API ${resp.status}: ${t.slice(0, 200)}`);
+  }
+  const data = await resp.json();
+  let text = data.content[0].text.trim().replace(/^```(?:json)?|```$/gm, "").trim();
+  const m = text.match(/\{[\s\S]*\}/);
+  return JSON.parse(m ? m[0] : text);
+}
+
+// ---------- game flow ----------
+async function playRound(dataUrl) {
+  busy = true; $("snapBtn").disabled = true;
+  beep(880, .1);
+
+  $("frozen").src = dataUrl;
+  $("frozen").style.display = "block";
+
+  const apiPromise = identify(dataUrl)
+    .then(r => ({ ok: true, r }))
+    .catch(e => ({ ok: false, e }));
+
+  // countdown in parallel
+  $("countdown").style.display = "flex";
+  let n = LS.cd;
+  $("countNum").textContent = n;
+  await new Promise(res => {
+    const t = setInterval(() => {
+      n--;
+      if (n <= 0) { clearInterval(t); res(); return; }
+      $("countNum").textContent = n;
+      beep(n <= 3 ? 1200 : 700, .07);
+    }, 1000);
+  });
+  $("countdown").style.display = "none";
+
+  const out = await apiPromise;
+  showReveal(out);
+}
+
+function showReveal(out) {
+  ["rConf","rTitle","rYears","rNotes","rFact","rErr"].forEach(i => $(i).textContent = "");
+  $("awardRow").innerHTML = "";
+
+  if (!out.ok) {
+    $("rTitle").textContent = "Hmm, no answer";
+    $("rErr").textContent = out.e.message.includes("Failed to fetch")
+      ? "No signal — the answer got lost in a dead zone. Try the next car!"
+      : out.e.message;
+  } else if (out.r.no_car) {
+    $("rTitle").textContent = "No car in frame!";
+    $("rNotes").textContent = "Too slow — snap earlier next time.";
+  } else {
+    const r = out.r;
+    beep(523,.1); setTimeout(()=>beep(659,.1),120); setTimeout(()=>beep(784,.18),240);
+    $("rConf").textContent = `confidence: ${r.confidence || "?"}`;
+    $("rTitle").textContent = `${r.make || "?"} ${r.model || ""}`;
+    $("rYears").textContent = r.years || "";
+    $("rNotes").textContent = r.trim_or_notes || "";
+    $("rFact").textContent = r.fun_fact || "";
+    players.forEach((p, pi) => {
+      [["Make +1",1],["Model +2",2],["Year +2",2]].forEach(([label, pts]) => {
+        const b = document.createElement("button");
+        b.className = "awardBtn";
+        b.textContent = `${p.name}: ${label}`;
+        b.onclick = () => {
+          b.disabled = true; b.style.opacity = .4;
+          players[pi].score += pts;
+          LS.players = players; renderScorebar();
+        };
+        $("awardRow").appendChild(b);
+      });
+    });
+  }
+  $("reveal").style.display = "flex";
+}
+
+$("snapBtn").onclick = () => { if (!busy) playRound(grabFrame()); };
+$("fileCap").addEventListener("change", async e => {
+  if (busy || !e.target.files[0]) return;
+  playRound(await fileToDataURL(e.target.files[0]));
+  e.target.value = "";
+});
+
+$("nextBtn").onclick = () => {
+  $("reveal").style.display = "none";
+  $("frozen").style.display = "none";
+  $("snapBtn").disabled = false;
+  busy = false;
+};
+
+// ---------- scoreboard ----------
+function renderScorebar() {
+  document.querySelectorAll(".chip").forEach(c => c.remove());
+  players.forEach(p => {
+    const c = document.createElement("div");
+    c.className = "chip";
+    c.innerHTML = `${p.name}<small>${p.score}</small>`;
+    $("scorebar").insertBefore(c, $("addPlayer"));
+  });
+}
+$("addPlayer").onclick = () => {
+  const name = prompt("Player name:");
+  if (!name || players.some(p => p.name === name)) return;
+  players.push({ name: name.trim().slice(0, 16), score: 0 });
+  LS.players = players; renderScorebar();
+};
+$("resetBtn").onclick = () => {
+  if (!confirm("Reset all scores?")) return;
+  players.forEach(p => p.score = 0);
+  LS.players = players; renderScorebar();
+};
+
+// ---------- setup ----------
+function openSetup() {
+  $("keyInput").value = LS.k;
+  $("modelSel").value = LS.model;
+  $("cdInput").value = LS.cd;
+  $("setup").style.display = "flex";
+}
+$("gearBtn").onclick = openSetup;
+$("saveSetup").onclick = () => {
+  const k = $("keyInput").value.trim();
+  if (!k.startsWith("sk-")) { alert("That doesn't look like an API key."); return; }
+  LS.k = k;
+  LS.model = $("modelSel").value;
+  LS.cd = Math.max(3, Math.min(20, +$("cdInput").value || 7));
+  $("setup").style.display = "none";
+  keepAwake();
+  if (!stream && !usingFallback) startCamera();
+};
+
+// ---------- boot ----------
+renderScorebar();
+if (!LS.k) openSetup(); else { startCamera(); keepAwake(); }
+</script>
+</body>
+</html>
